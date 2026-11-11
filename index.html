@@ -63,7 +63,7 @@ body {
   background: var(--panel); color: var(--text); font: inherit;
   letter-spacing: 0.08em; text-transform: uppercase; font-variant-numeric: tabular-nums;
 }
-.btn { box-shadow: inset 0 0 0 1px var(--border-strong); cursor: pointer; }
+.btn { box-shadow: inset 0 0 0 1px var(--border-strong); cursor: pointer; text-decoration: none; }
 .btn:focus-visible, textarea:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .btn.p { background: var(--primary); box-shadow: none; color: var(--on-primary); }
 .dot { width: var(--space-2); height: var(--space-2); border-radius: var(--radius-pill); background: var(--danger); }
@@ -85,7 +85,7 @@ textarea {
   background: var(--surface); color: var(--text); font: var(--fs-base)/var(--lh-base) var(--font-mono);
   word-break: break-all; resize: none; -webkit-user-select: text; user-select: text;
 }
-.btns { display: flex; gap: var(--space-3); margin-top: var(--space-4); }
+.btns { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-4); }
 .msg { margin: var(--space-3) 0 0; min-height: var(--lh-base); color: var(--text-muted); }
 .msg.bad { color: var(--danger); }
 </style>
@@ -99,11 +99,13 @@ textarea {
 </section>
 <!-- Opened from the pairing QR, in Safari. A home-screen app keeps its own storage, separate from
      Safari's, so pairing here would key a copy nobody opens: this sheet hands the code to the clipboard,
-     and the paste happens inside the App Hub. -->
+     and the paste happens inside the App Hub. Certificate fetches the PC's home CA, which iOS offers as a
+     profile (installed in Settings, then trusted in About > Certificate Trust Settings); it reads Trusted
+     once the PC's HTTPS address answers this phone, which is the only proof that step is done. -->
 <section id="handoff" class="sheet" hidden>
   <h1>Pairing code</h1>
   <textarea id="hoCode" readonly autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Pairing code"></textarea>
-  <div class="btns"><button class="btn p" id="hoCopy" type="button">Copy code</button><button class="btn" id="hoHere" type="button">Pair here</button></div>
+  <div class="btns"><a class="btn" id="hoCa" hidden>Certificate</a><button class="btn p" id="hoCopy" type="button">Copy code</button><button class="btn" id="hoHere" type="button">Pair here</button></div>
   <p id="hoMsg" class="msg"></p>
 </section>
 <div id="stage" hidden>
@@ -119,7 +121,9 @@ textarea {
 const $ = id => document.getElementById(id);
 const stage = $('stage'), cv = $('screen'), ctx = cv.getContext('2d');
 const stateLabel = $('stateLabel'), repairBtn = $('repair'), bar = $('bar'), fpsEl = $('fps'), offBtn = $('off');
-const LABEL = { connecting: 'Connecting', off: 'Off' };
+// Unreachable: no answer over HTTPS, which is all a page can see of three causes - away from home, sharing
+// off, or the home CA not trusted yet. Off: this viewer turned it off.
+const LABEL = { connecting: 'Connecting', off: 'Off', unreachable: 'Unreachable' };
 let state = 'connecting', drawn = 0, lastData = 0, ctl = null, wake = null, hideTimer = 0, armTimer = 0;
 let sw = 0, sh = 0, fitW = 0, fitH = 0;   // stage size, and the picture's size at zoom 1
 
@@ -131,13 +135,18 @@ function parsePair(str) {
   if (str.indexOf('ss1.') !== 0) throw new Error('not a Screen Share pairing code');
   let raw = '';
   try { raw = atob(str.slice(4)); } catch (e) { throw new Error('pairing code is incomplete'); }
-  const cut = raw.lastIndexOf('|');
-  if (cut < 0) throw new Error('pairing code is incomplete');
-  const origin = raw.slice(0, cut), key = raw.slice(cut + 1);
-  // https for the PC's Funnel address; plain http only for this device itself, which the tests use.
+  // origin|key, or origin|key|the home CA's download link
+  const parts = raw.split('|');
+  if (parts.length < 2 || parts.length > 3) throw new Error('pairing code is incomplete');
+  const [origin, key, ca = ''] = parts;
+  // https for the PC on the home network; plain http only for this device itself, which the tests use.
   if (!/^(https:\/\/[a-z0-9.-]+|http:\/\/(127\.0\.0\.1|localhost))(:\d+)?$/i.test(origin)) throw new Error('pairing code carries no usable address');
   if (!/^[A-Za-z0-9_-]{43}$/.test(key)) throw new Error('pairing code carries no 256-bit key');
-  return { origin, key };
+  // The certificate link may only lead to the same PC: a code is a link the phone follows on trust.
+  if (ca && !(/^http:\/\/[a-z0-9.-]+(:\d+)?\/ca\.pem$/i.test(ca) && new URL(ca).hostname === new URL(origin).hostname)) {
+    throw new Error('pairing code links a certificate elsewhere');
+  }
+  return { origin, key, ca };
 }
 function cfgLoad() { try { const c = JSON.parse(localStorage.getItem(LS)); return c && c.origin && c.key ? c : null; } catch (e) { return null; } }
 function cfgSave(c) { try { localStorage.setItem(LS, JSON.stringify(c)); return true; } catch (e) { return false; } }
@@ -249,8 +258,8 @@ function setState(s) {
   document.body.dataset.state = s;
   stateLabel.textContent = LABEL[s] || '';
   $('state').hidden = s === 'live';
-  repairBtn.hidden = s !== 'off';
-  cv.hidden = s === 'off';
+  repairBtn.hidden = s !== 'off' && s !== 'unreachable';
+  cv.hidden = s === 'off' || s === 'unreachable';
   if (s !== 'live') showBar(false);
   holdAwake(s === 'live');
   if (parent !== window) {
@@ -314,7 +323,18 @@ async function read(reader) {
 // so both are watched (same origin, so the Hub's document is reachable).
 const topDoc = (() => { try { return window.top.document; } catch (e) { return document; } })();
 const hidden = () => document.hidden || topDoc.hidden;
-function onVisibility() { if (hidden()) { if (ctl) ctl.abort(); } else if (wake) wake(); }
+function onVisibility() {
+  if (hidden()) { if (ctl) ctl.abort(); return; }
+  if (wake) wake();
+  if (handoffCfg) probeTrust(handoffCfg);   // back from Settings, where the trust is switched on
+}
+
+// Whether this phone already trusts the PC's certificate: any answer at all over HTTPS proves it (the
+// refusal of a request without the key included); no answer leaves the button as it was.
+let handoffCfg = null;
+function probeTrust(c) {
+  fetch(c.origin + '/healthz', { cache: 'no-store' }).then(() => { $('hoCa').textContent = 'Trusted'; }, () => {});
+}
 document.addEventListener('visibilitychange', onVisibility);
 if (topDoc !== document) {
   const gone = new AbortController();   // the Hub outlives this frame: unhook on the way out
@@ -323,6 +343,7 @@ if (topDoc !== document) {
 }
 
 const sleep = ms => new Promise(r => { wake = r; setTimeout(r, ms); });
+const down = () => { if (state !== 'off') setState('unreachable'); };   // Off stays Off until it answers again
 async function run() {
   for (;;) {
     if (paused || hidden()) { await sleep(36e5); continue; }
@@ -332,8 +353,8 @@ async function run() {
       const r = await fetch(cfg.origin + '/stream', { cache: 'no-store', signal: ctl.signal, headers: auth() });
       if (r.status === 401) toPair('this key was refused');
       else if (r.ok && r.body) { streamed = true; await read(r.body.getReader()); }
-      else setState('off');
-    } catch (e) { if (!streamed && !paused) setState('off'); }
+      else down();   // 403: a caller outside the home subnet (a guest network, say)
+    } catch (e) { if (!streamed && !paused) down(); }
     ctl = null;
     if (streamed && state === 'live') setState('connecting');   // dropped mid-stream: retry at once
     await sleep(streamed ? 250 : 3000);
@@ -392,7 +413,7 @@ $('hoCopy').addEventListener('click', () => {
   else legacy();
 });
 $('hoHere').addEventListener('click', () => {
-  try { const c = parsePair($('hoCode').value); if (cfgSave(c)) start(c); else $('hoMsg').textContent = 'this browser refuses to store the key'; }
+  try { const c = parsePair($('hoCode').value); handoffCfg = null; if (cfgSave(c)) start(c); else $('hoMsg').textContent = 'this browser refuses to store the key'; }
   catch (e) { $('hoMsg').textContent = e.message; }
 });
 
@@ -404,7 +425,12 @@ $('hoHere').addEventListener('click', () => {
   if (frag.indexOf('#ss1.') === 0) {
     const code = frag.slice(1);
     try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
-    try { parsePair(code); $('hoCode').value = code; showSheet('handoff'); }
+    try {
+      const c = parsePair(code);
+      $('hoCode').value = code;
+      if (c.ca) { $('hoCa').href = c.ca; $('hoCa').hidden = false; handoffCfg = c; probeTrust(c); }
+      showSheet('handoff');
+    }
     catch (e) { $('pairMsg').textContent = e.message; showSheet('pair'); }
   } else {
     const c = cfgLoad();
@@ -416,7 +442,7 @@ $('hoHere').addEventListener('click', () => {
 <script>if ('serviceWorker' in navigator) { navigator.serviceWorker.register('sw.js').catch(() => {}); }</script>
 <script>
 (function(){
-  var BUILD="20261111181647";                            // stamped to a unique id at publish
+  var BUILD="20261111203757";                            // stamped to a unique id at publish
   if(BUILD.indexOf("APP_BUILD")>-1) return;             // unstamped (local/dev) -> disabled
   var busy=false;
   function check(){
