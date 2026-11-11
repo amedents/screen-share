@@ -1,0 +1,440 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Screen Share">
+<meta name="theme-color" content="#000000">
+<meta name="color-scheme" content="dark">
+<link rel="apple-touch-icon" sizes="180x180" href="icon-180.png">
+<link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
+<title>Screen Share</title>
+<style>
+/* Tokens from visual-design: base 16, major-third, unit 4, seed #5b8cff, dark roles. Dark only on purpose:
+   a viewer's surround must not compete with the picture, so there is no light theme to switch to. */
+:root {
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
+  --fs-base: 1rem; --lh-base: 1.5rem;
+  --fs-xl: 1.5625rem; --lh-xl: 2rem; --tr-xl: -0.02em;
+  --fs-2xl: 1.9375rem; --lh-2xl: 2.5rem;
+  --space-2: 0.5rem; --space-3: 0.75rem; --space-4: 1rem; --space-6: 1.5rem; --space-24: 6rem;
+  --radius-md: 0.5rem; --radius-pill: 9999px;
+  --bg: #13161c; --surface: #1e2126; --text: #fafcff; --text-muted: #8c9098; --border-strong: #6f737a;
+  --primary: #5b8cff; --on-primary: #13161c; --danger: #f36b60; --focus: #6292ff;
+  /* True black, not --bg: on an OLED phone the letterbox then disappears into the bezel. */
+  --letterbox: #000000;
+  /* --surface (#1e2126) at the solved alpha: the smallest at which --text keeps 14:1 and --danger 4.5:1
+     over a white PC screen behind the panel (0.96; muted text would need the same). */
+  --panel: rgb(30 33 38 / 0.96);
+}
+[hidden] { display: none !important; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: var(--letterbox); }
+body {
+  color: var(--text); font: var(--fs-base)/var(--lh-base) var(--font-sans);
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+  touch-action: none;  /* the page never zooms; the picture does, so the bar keeps its size */
+}
+/* The stage is always landscape: in a portrait viewport it is laid out H x W and turned a quarter. */
+#stage { position: fixed; left: 50%; top: 50%; display: grid; place-items: center; overflow: hidden; }
+#screen { display: block; transform-origin: 50% 50%; will-change: transform; }
+#state {
+  position: absolute; left: 0; right: 0; top: 45%; transform: translateY(-50%);
+  display: grid; justify-items: center; gap: var(--space-6);
+}
+#stateLabel {
+  margin: 0; font-size: var(--fs-2xl); line-height: var(--lh-2xl);
+  letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted);
+}
+#bar {
+  position: absolute; left: 0; right: 0; top: 0;
+  display: flex; justify-content: space-between; align-items: center; gap: var(--space-4);
+  padding: var(--space-4) max(var(--space-4), env(safe-area-inset-left), env(safe-area-inset-right),
+    env(safe-area-inset-top), env(safe-area-inset-bottom));
+}
+/* Every control is one height: a body line plus two block paddings, 48 px, above the 44 pt touch floor.
+   Outlines are inset shadows rather than borders so they add nothing to that height. */
+.pill, .btn {
+  box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2);
+  margin: 0; padding: var(--space-3) var(--space-6); border: 0; border-radius: var(--radius-pill);
+  background: var(--panel); color: var(--text); font: inherit;
+  letter-spacing: 0.08em; text-transform: uppercase; font-variant-numeric: tabular-nums;
+}
+.btn { box-shadow: inset 0 0 0 1px var(--border-strong); cursor: pointer; }
+.btn:focus-visible, textarea:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.btn.p { background: var(--primary); box-shadow: none; color: var(--on-primary); }
+.dot { width: var(--space-2); height: var(--space-2); border-radius: var(--radius-pill); background: var(--danger); }
+#off.armed { background: var(--danger); box-shadow: none; color: var(--bg); }
+
+/* Pairing sheets: one column hanging at the optical centre (its middle at 0.45 of the height). */
+.sheet {
+  position: fixed; inset: 0; box-sizing: border-box; overflow: auto; background: var(--bg);
+  display: grid; align-content: center;
+  padding: max(var(--space-6), env(safe-area-inset-top)) max(var(--space-6), env(safe-area-inset-right))
+    max(var(--space-24), env(safe-area-inset-bottom)) max(var(--space-6), env(safe-area-inset-left));
+}
+.sheet > * { width: 100%; max-width: 30rem; justify-self: center; }
+.sheet h1 { margin: 0 0 var(--space-4); font-size: var(--fs-xl); line-height: var(--lh-xl); letter-spacing: var(--tr-xl); font-weight: 600; }
+/* 16 px, not smaller: iOS zooms the page into any field set below it. */
+textarea {
+  box-sizing: border-box; display: block; height: calc(4 * var(--lh-base) + 2 * var(--space-3)); padding: var(--space-3);
+  border: 0; border-radius: var(--radius-md); box-shadow: inset 0 0 0 1px var(--border-strong);
+  background: var(--surface); color: var(--text); font: var(--fs-base)/var(--lh-base) var(--font-mono);
+  word-break: break-all; resize: none; -webkit-user-select: text; user-select: text;
+}
+.btns { display: flex; gap: var(--space-3); margin-top: var(--space-4); }
+.msg { margin: var(--space-3) 0 0; min-height: var(--lh-base); color: var(--text-muted); }
+.msg.bad { color: var(--danger); }
+</style>
+</head>
+<body data-state="connecting">
+<section id="pair" class="sheet" hidden>
+  <h1>Screen Share</h1>
+  <textarea id="pairIn" placeholder="ss1.&hellip;" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Pairing code"></textarea>
+  <div class="btns"><button class="btn p" id="pairGo" type="button">Pair</button><button class="btn" id="pairPaste" type="button">Paste</button></div>
+  <p id="pairMsg" class="msg bad"></p>
+</section>
+<!-- Opened from the pairing QR, in Safari. A home-screen app keeps its own storage, separate from
+     Safari's, so pairing here would key a copy nobody opens: this sheet hands the code to the clipboard,
+     and the paste happens inside the App Hub. -->
+<section id="handoff" class="sheet" hidden>
+  <h1>Pairing code</h1>
+  <textarea id="hoCode" readonly autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Pairing code"></textarea>
+  <div class="btns"><button class="btn p" id="hoCopy" type="button">Copy code</button><button class="btn" id="hoHere" type="button">Pair here</button></div>
+  <p id="hoMsg" class="msg"></p>
+</section>
+<div id="stage" hidden>
+  <canvas id="screen" width="1920" height="1080"></canvas>
+  <div id="state"><p id="stateLabel">Connecting</p><button class="btn" id="repair" type="button" hidden>Pair</button></div>
+  <div id="bar" hidden>
+    <span class="pill"><span class="dot"></span>Live <span id="fps">0 fps</span></span>
+    <button class="btn" id="off" type="button">Turn off</button>
+  </div>
+</div>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const stage = $('stage'), cv = $('screen'), ctx = cv.getContext('2d');
+const stateLabel = $('stateLabel'), repairBtn = $('repair'), bar = $('bar'), fpsEl = $('fps'), offBtn = $('off');
+const LABEL = { connecting: 'Connecting', off: 'Off' };
+let state = 'connecting', drawn = 0, lastData = 0, ctl = null, wake = null, hideTimer = 0, armTimer = 0;
+let sw = 0, sh = 0, fitW = 0, fitH = 0;   // stage size, and the picture's size at zoom 1
+
+// ---- pairing: the PC's address and its 256-bit device key, kept in this origin's storage ----
+const LS = 'screen_share_v1';
+let cfg = null, paused = true;
+function parsePair(str) {
+  str = (str || '').replace(/\s+/g, '');
+  if (str.indexOf('ss1.') !== 0) throw new Error('not a Screen Share pairing code');
+  let raw = '';
+  try { raw = atob(str.slice(4)); } catch (e) { throw new Error('pairing code is incomplete'); }
+  const cut = raw.lastIndexOf('|');
+  if (cut < 0) throw new Error('pairing code is incomplete');
+  const origin = raw.slice(0, cut), key = raw.slice(cut + 1);
+  // https for the PC's Funnel address; plain http only for this device itself, which the tests use.
+  if (!/^(https:\/\/[a-z0-9.-]+|http:\/\/(127\.0\.0\.1|localhost))(:\d+)?$/i.test(origin)) throw new Error('pairing code carries no usable address');
+  if (!/^[A-Za-z0-9_-]{43}$/.test(key)) throw new Error('pairing code carries no 256-bit key');
+  return { origin, key };
+}
+function cfgLoad() { try { const c = JSON.parse(localStorage.getItem(LS)); return c && c.origin && c.key ? c : null; } catch (e) { return null; } }
+function cfgSave(c) { try { localStorage.setItem(LS, JSON.stringify(c)); return true; } catch (e) { return false; } }
+const auth = () => ({ Authorization: 'Bearer ' + cfg.key });
+
+function showSheet(name) {   // 'pair', 'handoff', or null for the stage
+  $('pair').hidden = name !== 'pair';
+  $('handoff').hidden = name !== 'handoff';
+  stage.hidden = !!name;
+}
+function start(c) {
+  cfg = c; paused = false;
+  showSheet(null); fit();
+  if (wake) wake();
+}
+function toPair(msg) {
+  paused = true;
+  if (ctl) ctl.abort();
+  setState('connecting');
+  $('pairMsg').textContent = msg || '';
+  showSheet('pair');
+}
+
+function fit() {
+  const W = innerWidth, H = innerHeight, turn = H > W;
+  sw = turn ? H : W; sh = turn ? W : H;
+  stage.style.width = sw + 'px';
+  stage.style.height = sh + 'px';
+  stage.style.transform = `translate(-50%, -50%) rotate(${turn ? 90 : 0}deg)`;
+  const k = Math.min(sw / cv.width, sh / cv.height);
+  fitW = Math.floor(cv.width * k); fitH = Math.floor(cv.height * k);
+  cv.style.width = fitW + 'px';
+  cv.style.height = fitH + 'px';
+  applyView();
+}
+addEventListener('resize', fit);
+
+// ---- pinch zoom and pan, in the stage's own axes ----
+// view: the picture is drawn at stage centre + (x, y), scaled s about its own centre.
+const MAX_ZOOM = 6;
+const view = { s: 1, x: 0, y: 0 };
+const touches = new Map();
+let gesture = null, moved = false;
+
+function applyView() {
+  view.s = Math.min(MAX_ZOOM, Math.max(1, view.s));
+  const mx = Math.max(0, (view.s * fitW - sw) / 2), my = Math.max(0, (view.s * fitH - sh) / 2);
+  view.x = Math.min(mx, Math.max(-mx, view.x));   // never pan past the picture's edge
+  view.y = Math.min(my, Math.max(-my, view.y));
+  cv.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.s})`;
+}
+// Screen point -> stage coordinates about its centre. Turned a quarter clockwise, the stage's x runs down
+// the screen and its y runs right to left.
+function toStage(e) {
+  const dx = e.clientX - innerWidth / 2, dy = e.clientY - innerHeight / 2;
+  return innerHeight > innerWidth ? { x: dy, y: -dx } : { x: dx, y: dy };
+}
+// Re-anchored whenever a finger lands or lifts, so going from two fingers to one never jumps.
+function beginGesture() {
+  const p = [...touches.values()];
+  if (p.length >= 2) {
+    const m = { x: (p[0].x + p[1].x) / 2, y: (p[0].y + p[1].y) / 2 };
+    gesture = { pinch: true, d0: Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y) || 1, s0: view.s,
+      q: { x: (m.x - view.x) / view.s, y: (m.y - view.y) / view.s } };   // picture point under the fingers
+  } else if (p.length === 1) {
+    gesture = { pinch: false, p0: p[0], x0: view.x, y0: view.y };
+  } else gesture = null;
+}
+stage.addEventListener('pointerdown', e => {
+  if (e.target.closest('button, #bar')) return;
+  if (!touches.size) moved = false;
+  touches.set(e.pointerId, toStage(e));
+  stage.setPointerCapture(e.pointerId);
+  beginGesture();
+});
+stage.addEventListener('pointermove', e => {
+  if (!touches.has(e.pointerId) || !gesture) return;
+  touches.set(e.pointerId, toStage(e));
+  const p = [...touches.values()];
+  if (gesture.pinch && p.length >= 2) {
+    const m = { x: (p[0].x + p[1].x) / 2, y: (p[0].y + p[1].y) / 2 };
+    view.s = Math.min(MAX_ZOOM, Math.max(1, gesture.s0 * Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y) / gesture.d0));
+    view.x = m.x - view.s * gesture.q.x;
+    view.y = m.y - view.s * gesture.q.y;
+    moved = true;
+  } else if (!gesture.pinch) {
+    const dx = p[0].x - gesture.p0.x, dy = p[0].y - gesture.p0.y;
+    if (Math.hypot(dx, dy) > 8) moved = true;
+    view.x = gesture.x0 + dx;
+    view.y = gesture.y0 + dy;
+  }
+  applyView();
+});
+function liftFinger(e) {
+  if (!touches.delete(e.pointerId)) return;
+  if (!touches.size && !moved && state === 'live') showBar(bar.hidden);   // a tap
+  beginGesture();
+}
+stage.addEventListener('pointerup', liftFinger);
+stage.addEventListener('pointercancel', liftFinger);
+document.addEventListener('gesturestart', e => e.preventDefault());   // Safari's own page pinch
+fit();
+
+// Inside the App Hub, the Hub's top bar carries a live dot (its app-status-dot message).
+const LIVE_DOT = getComputedStyle(document.documentElement).getPropertyValue('--danger').trim();
+function setState(s) {
+  if (s === state) return;
+  state = s;
+  document.body.dataset.state = s;
+  stateLabel.textContent = LABEL[s] || '';
+  $('state').hidden = s === 'live';
+  repairBtn.hidden = s !== 'off';
+  cv.hidden = s === 'off';
+  if (s !== 'live') showBar(false);
+  holdAwake(s === 'live');
+  if (parent !== window) {
+    try { parent.postMessage({ type: 'app-status-dot', color: s === 'live' ? LIVE_DOT : null }, location.origin); } catch (e) {}
+  }
+}
+
+// The phone stays awake while the picture is live (Auto-Lock would otherwise dim a viewer nobody touches).
+// The system drops the lock whenever the page is hidden; going live again takes a new one.
+let lock = null;
+async function holdAwake(on) {
+  try {
+    if (on && !lock && navigator.wakeLock) {
+      lock = await navigator.wakeLock.request('screen');
+      lock.addEventListener('release', () => { lock = null; });
+    } else if (!on && lock) { const l = lock; lock = null; await l.release(); }
+  } catch (e) { lock = null; }
+}
+
+// Decode newest-first: while one JPEG decodes, later arrivals overwrite `pending`, so a slow phone
+// skips frames rather than falling behind the PC.
+let pending = null, drawing = false;
+function show(blob) { pending = blob; if (!drawing) drawLoop(); }
+async function drawLoop() {
+  drawing = true;
+  while (pending) {
+    const blob = pending; pending = null;
+    try {
+      const bmp = await createImageBitmap(blob);
+      if (bmp.width !== cv.width || bmp.height !== cv.height) { cv.width = bmp.width; cv.height = bmp.height; fit(); }
+      ctx.drawImage(bmp, 0, 0);
+      if (bmp.close) bmp.close();
+      drawn++;
+      if (!paused) setState('live');
+    } catch (e) { /* a torn frame: the next one replaces it */ }
+  }
+  drawing = false;
+}
+
+// Wire format from server.js: [u32 big-endian length][JPEG] repeated; length 0 is a heartbeat.
+async function read(reader) {
+  let buf = new Uint8Array(0);
+  lastData = Date.now();
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) return;
+    lastData = Date.now();
+    const joined = new Uint8Array(buf.length + value.length);
+    joined.set(buf); joined.set(value, buf.length); buf = joined;
+    while (buf.length >= 4) {
+      const n = ((buf[0] << 24) >>> 0) + (buf[1] << 16) + (buf[2] << 8) + buf[3];
+      if (buf.length < 4 + n) break;
+      if (n) show(new Blob([buf.subarray(4, 4 + n)], { type: 'image/jpeg' }));
+      buf = buf.subarray(4 + n);
+    }
+  }
+}
+
+// Nothing streams while the app is in the background, so the PC stops capturing once nobody watches.
+// Inside the App Hub the page is an iframe, and the Hub's own document is the one whose visibility moves,
+// so both are watched (same origin, so the Hub's document is reachable).
+const topDoc = (() => { try { return window.top.document; } catch (e) { return document; } })();
+const hidden = () => document.hidden || topDoc.hidden;
+function onVisibility() { if (hidden()) { if (ctl) ctl.abort(); } else if (wake) wake(); }
+document.addEventListener('visibilitychange', onVisibility);
+if (topDoc !== document) {
+  const gone = new AbortController();   // the Hub outlives this frame: unhook on the way out
+  topDoc.addEventListener('visibilitychange', onVisibility, { signal: gone.signal });
+  addEventListener('pagehide', () => gone.abort());
+}
+
+const sleep = ms => new Promise(r => { wake = r; setTimeout(r, ms); });
+async function run() {
+  for (;;) {
+    if (paused || hidden()) { await sleep(36e5); continue; }
+    let streamed = false;
+    try {
+      ctl = new AbortController();
+      const r = await fetch(cfg.origin + '/stream', { cache: 'no-store', signal: ctl.signal, headers: auth() });
+      if (r.status === 401) toPair('this key was refused');
+      else if (r.ok && r.body) { streamed = true; await read(r.body.getReader()); }
+      else setState('off');
+    } catch (e) { if (!streamed && !paused) setState('off'); }
+    ctl = null;
+    if (streamed && state === 'live') setState('connecting');   // dropped mid-stream: retry at once
+    await sleep(streamed ? 250 : 3000);
+  }
+}
+
+setInterval(() => {
+  fpsEl.textContent = drawn + ' fps';
+  drawn = 0;
+  if (ctl && Date.now() - lastData > 25000) ctl.abort();   // the server beats every 10 s
+}, 1000);
+
+function showBar(v) {
+  bar.hidden = !v;
+  clearTimeout(hideTimer);
+  if (v) hideTimer = setTimeout(() => { if (!offBtn.classList.contains('armed')) showBar(false); }, 4000);
+}
+function disarm() { clearTimeout(armTimer); offBtn.classList.remove('armed'); offBtn.textContent = 'Turn off'; }
+offBtn.addEventListener('click', async e => {
+  e.stopPropagation();
+  if (!offBtn.classList.contains('armed')) {
+    offBtn.classList.add('armed');
+    offBtn.textContent = 'Confirm';
+    armTimer = setTimeout(() => { disarm(); showBar(true); }, 3000);
+    showBar(true);
+    return;
+  }
+  disarm();
+  try { await fetch(cfg.origin + '/off', { method: 'POST', headers: { ...auth(), 'X-Screen-Share': 'off' } }); } catch (e) {}
+  if (ctl) ctl.abort();
+  setState('off');
+});
+repairBtn.addEventListener('click', () => toPair(''));
+
+$('pairGo').addEventListener('click', () => {
+  try {
+    const c = parsePair($('pairIn').value);
+    if (!cfgSave(c)) { $('pairMsg').textContent = 'this browser refuses to store the key'; return; }
+    $('pairIn').value = ''; $('pairMsg').textContent = '';
+    start(c);
+  } catch (e) { $('pairMsg').textContent = e.message; }
+});
+$('pairPaste').addEventListener('click', () => {
+  if (!(navigator.clipboard && navigator.clipboard.readText)) { $('pairMsg').textContent = 'paste is not available here'; return; }
+  navigator.clipboard.readText().then(t => { $('pairIn').value = (t || '').trim(); $('pairMsg').textContent = ''; },
+    () => { $('pairMsg').textContent = 'paste was refused'; });
+});
+$('hoCopy').addEventListener('click', () => {
+  const t = $('hoCode');
+  const legacy = () => {
+    t.focus(); t.setSelectionRange(0, t.value.length);
+    let ok = false; try { ok = document.execCommand('copy'); } catch (e) {}
+    $('hoMsg').textContent = ok ? 'copied' : 'copy failed';
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t.value).then(() => { $('hoMsg').textContent = 'copied'; }, legacy);
+  else legacy();
+});
+$('hoHere').addEventListener('click', () => {
+  try { const c = parsePair($('hoCode').value); if (cfgSave(c)) start(c); else $('hoMsg').textContent = 'this browser refuses to store the key'; }
+  catch (e) { $('hoMsg').textContent = e.message; }
+});
+
+// ---- boot ----
+// A code in the URL FRAGMENT is how the pairing QR reaches this page; a fragment is never sent to a server.
+// It is stripped from the address bar at once, and it does not pair by itself: see #handoff.
+(() => {
+  const frag = location.hash || '';
+  if (frag.indexOf('#ss1.') === 0) {
+    const code = frag.slice(1);
+    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
+    try { parsePair(code); $('hoCode').value = code; showSheet('handoff'); }
+    catch (e) { $('pairMsg').textContent = e.message; showSheet('pair'); }
+  } else {
+    const c = cfgLoad();
+    if (c) start(c); else showSheet('pair');
+  }
+  run();
+})();
+</script>
+<script>if ('serviceWorker' in navigator) { navigator.serviceWorker.register('sw.js').catch(() => {}); }</script>
+<script>
+(function(){
+  var BUILD="20261111181647";                            // stamped to a unique id at publish
+  if(BUILD.indexOf("APP_BUILD")>-1) return;             // unstamped (local/dev) -> disabled
+  var busy=false;
+  function check(){
+    if(busy||document.visibilityState!=="visible"||!navigator.onLine) return;
+    busy=true;
+    fetch("./?_au="+Date.now(),{cache:"no-store"})
+      .then(function(r){ return r.ok? r.text():null; })
+      .then(function(t){
+        if(t){ var m=t.match(/var BUILD="([^"]+)"/);
+          if(m && m[1]!==BUILD && m[1].indexOf("APP_BUILD")<0){ location.reload(); return; } }
+        busy=false;
+      })
+      .catch(function(){ busy=false; });
+  }
+  document.addEventListener("visibilitychange",check);
+  window.addEventListener("pageshow",check);
+  window.addEventListener("focus",check);
+})();
+</script>
+</body>
+</html>
