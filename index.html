@@ -68,6 +68,8 @@ body {
 .btn.p { background: var(--primary); box-shadow: none; color: var(--on-primary); }
 .dot { width: var(--space-2); height: var(--space-2); border-radius: var(--radius-pill); background: var(--danger); }
 #off.armed { background: var(--danger); box-shadow: none; color: var(--bg); }
+/* The two actions are one group: a step closer to each other than the bar's ends are to them. */
+.acts { display: flex; gap: var(--space-3); }
 
 /* Pairing sheets: one column hanging at the optical centre (its middle at 0.45 of the height). */
 .sheet {
@@ -113,14 +115,14 @@ textarea {
   <div id="state"><p id="stateLabel">Connecting</p><button class="btn" id="repair" type="button" hidden>Pair</button></div>
   <div id="bar" hidden>
     <span class="pill"><span class="dot"></span>Live <span id="fps">0 fps</span></span>
-    <button class="btn" id="off" type="button">Turn off</button>
+    <span class="acts"><button class="btn" id="mon" type="button">Monitor off</button><button class="btn" id="off" type="button">Turn off</button></span>
   </div>
 </div>
 <script>
 'use strict';
 const $ = id => document.getElementById(id);
 const stage = $('stage'), cv = $('screen'), ctx = cv.getContext('2d');
-const stateLabel = $('stateLabel'), repairBtn = $('repair'), bar = $('bar'), fpsEl = $('fps'), offBtn = $('off');
+const stateLabel = $('stateLabel'), repairBtn = $('repair'), bar = $('bar'), fpsEl = $('fps'), offBtn = $('off'), monBtn = $('mon');
 // Unreachable: no answer over HTTPS, which is all a page can see of three causes - away from home, sharing
 // off, or the home CA not trusted yet. Off: this viewer turned it off.
 const LABEL = { connecting: 'Connecting', off: 'Off', unreachable: 'Unreachable' };
@@ -387,6 +389,18 @@ offBtn.addEventListener('click', async e => {
   if (ctl) ctl.abort();
   setState('off');
 });
+// No confirm, unlike Turn off: darkening the monitor is undone by any input at the PC, and sharing carries on.
+// The bar goes away on success, so the picture is what the tap leaves on screen.
+monBtn.addEventListener('click', async e => {
+  e.stopPropagation();
+  disarm();
+  monBtn.disabled = true;
+  try {
+    const r = await fetch(cfg.origin + '/monitor-off', { method: 'POST', headers: { ...auth(), 'X-Screen-Share': 'monitor-off' } });
+    showBar(!r.ok);
+  } catch (e) { showBar(true); }
+  monBtn.disabled = false;
+});
 repairBtn.addEventListener('click', () => toPair(''));
 
 $('pairGo').addEventListener('click', () => {
@@ -442,7 +456,7 @@ $('hoHere').addEventListener('click', () => {
 <script>if ('serviceWorker' in navigator) { navigator.serviceWorker.register('sw.js').catch(() => {}); }</script>
 <script>
 (function(){
-  var BUILD="20261111203757";                            // stamped to a unique id at publish
+  var BUILD="20261113001709";                            // stamped to a unique id at publish
   if(BUILD.indexOf("APP_BUILD")>-1) return;             // unstamped (local/dev) -> disabled
   var busy=false;
   function check(){
