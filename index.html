@@ -340,7 +340,9 @@ function setState(s) {
   $('state').hidden = s === 'live';
   repairBtn.hidden = s !== 'off' && s !== 'unreachable';
   cv.hidden = s === 'off' || s === 'unreachable';
-  if (s !== 'live') showBar(false);
+  // The bar, with its Screen | Transcript switch, shows each time the picture comes up and steps aside after
+  // 4 s, so the switch is seen on every open rather than found by tapping.
+  showBar(s === 'live');
   holdAwake(s === 'live');
   if (parent !== window) {
     try { parent.postMessage({ type: 'app-status-dot', color: s === 'live' ? LIVE_DOT : null }, location.origin); } catch (e) {}
@@ -360,15 +362,17 @@ async function holdAwake(on) {
 }
 
 // Decode newest-first: while one JPEG decodes, later arrivals overwrite `pending`, so a slow phone
-// skips frames rather than falling behind the PC.
-let pending = null, drawing = false;
+// skips frames rather than falling behind the PC. `cut` moves when the picture is stopped on purpose: a frame
+// still decoding across it is dropped, or it would bring a stopped picture back to live.
+let pending = null, drawing = false, cut = 0;
 function show(blob) { pending = blob; if (!drawing) drawLoop(); }
 async function drawLoop() {
   drawing = true;
   while (pending) {
-    const blob = pending; pending = null;
+    const blob = pending, at = cut; pending = null;
     try {
       const bmp = await createImageBitmap(blob);
+      if (at !== cut) { if (bmp.close) bmp.close(); continue; }
       if (bmp.width !== cv.width || bmp.height !== cv.height) { cv.width = bmp.width; cv.height = bmp.height; fit(); }
       ctx.drawImage(bmp, 0, 0);
       if (bmp.close) bmp.close();
@@ -465,6 +469,7 @@ offBtn.addEventListener('click', async e => {
   disarm();
   try { await fetch(cfg.origin + '/off', { method: 'POST', headers: { ...auth(), 'X-Screen-Share': 'off' } }); } catch (e) {}
   if (ctl) ctl.abort();
+  pending = null; cut++;
   setState('off');
 });
 // No confirm, unlike Turn off: darkening the monitor is undone by any input at the PC, and sharing carries on.
@@ -669,7 +674,7 @@ setInterval(poll, 5000);
 <script>if ('serviceWorker' in navigator) { navigator.serviceWorker.register('sw.js').catch(() => {}); }</script>
 <script>
 (function(){
-  var BUILD="20261113152020";                            // stamped to a unique id at publish
+  var BUILD="20261113160937";                            // stamped to a unique id at publish
   if(BUILD.indexOf("APP_BUILD")>-1) return;             // unstamped (local/dev) -> disabled
   var busy=false;
   function check(){
