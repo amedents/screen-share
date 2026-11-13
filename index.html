@@ -18,13 +18,15 @@
 :root {
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
+  --fs-sm: 0.8125rem; --lh-sm: 1.25rem;
   --fs-base: 1rem; --lh-base: 1.5rem;
   --fs-xl: 1.5625rem; --lh-xl: 2rem; --tr-xl: -0.02em;
   --fs-2xl: 1.9375rem; --lh-2xl: 2.5rem;
-  --space-2: 0.5rem; --space-3: 0.75rem; --space-4: 1rem; --space-6: 1.5rem; --space-24: 6rem;
+  --space-1: 0.25rem; --space-2: 0.5rem; --space-3: 0.75rem; --space-4: 1rem; --space-6: 1.5rem; --space-8: 2rem; --space-12: 3rem; --space-24: 6rem;
   --radius-md: 0.5rem; --radius-pill: 9999px;
-  --bg: #13161c; --surface: #1e2126; --text: #fafcff; --text-muted: #8c9098; --border-strong: #6f737a;
-  --primary: #5b8cff; --on-primary: #13161c; --danger: #f36b60; --focus: #6292ff;
+  --bg: #13161c; --surface: #1e2126; --surface-2: #262a30; --border: #31353b;
+  --text: #fafcff; --text-muted: #8c9098; --border-strong: #6f737a;
+  --primary: #5b8cff; --on-primary: #13161c; --primary-text: #6292ff; --danger: #f36b60; --focus: #6292ff;
   /* True black, not --bg: on an OLED phone the letterbox then disappears into the bezel. */
   --letterbox: #000000;
   /* --surface (#1e2126) at the solved alpha: the smallest at which --text keeps 14:1 and --danger 4.5:1
@@ -90,6 +92,74 @@ textarea {
 .btns { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-4); }
 .msg { margin: var(--space-3) 0 0; min-height: var(--lh-base); color: var(--text-muted); }
 .msg.bad { color: var(--danger); }
+
+/* Screen | Transcript: one pill holding two, the outer padding one unit, so the inner pills are concentric and
+   the whole stays the 48 px control height. */
+.seg { display: inline-flex; padding: var(--space-1); border-radius: var(--radius-pill); background: var(--panel); box-shadow: inset 0 0 0 1px var(--border-strong); }
+.tab {
+  margin: 0; padding: var(--space-2) var(--space-4); border: 0; border-radius: var(--radius-pill);
+  background: transparent; color: var(--text-muted); font: inherit; letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer;
+}
+.tab[aria-selected="true"] { background: var(--primary); color: var(--on-primary); }
+.tab:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+/* The transcript: a reading page in the phone's own orientation, not the turned stage. */
+/* minmax(0, 1fr): the column is the viewport's width whatever the bar holds, so a wide control can never
+   widen the feed past the screen. */
+#log { position: fixed; inset: 0; display: grid; grid-template-rows: auto 1fr; grid-template-columns: minmax(0, 1fr); background: var(--bg); touch-action: pan-y; }
+/* Its sides are the feed's column edges: (100% - 66ch) / 2 once the screen is wider than the column. */
+#logBar {
+  display: flex; align-items: center; gap: var(--space-3); box-shadow: inset 0 -1px 0 var(--border);
+  padding: max(var(--space-3), env(safe-area-inset-top)) max(var(--space-4), env(safe-area-inset-right), calc((100% - 66ch) / 2))
+    var(--space-3) max(var(--space-4), env(safe-area-inset-left), calc((100% - 66ch) / 2));
+}
+/* The colour picker is a control of the bar's height; its chevron is drawn from two borders in currentColor. */
+.pick { position: relative; display: inline-flex; }
+.pick::after {
+  content: ""; position: absolute; right: var(--space-6); top: 50%; width: var(--space-2); height: var(--space-2);
+  border: solid currentColor; border-width: 0 2px 2px 0; transform: translateY(-75%) rotate(45deg); pointer-events: none;
+}
+select {
+  box-sizing: border-box; margin: 0; padding: var(--space-3) var(--space-12) var(--space-3) var(--space-6); border: 0;
+  border-radius: var(--radius-pill); box-shadow: inset 0 0 0 1px var(--border-strong); background: var(--panel); color: var(--text);
+  font: inherit; letter-spacing: 0.08em; text-transform: uppercase; -webkit-appearance: none; appearance: none; cursor: pointer;
+}
+/* A phone held upright has no room for both on one line - the tabs take ~240 px and the widest colour's
+   picker ~140 px of a 390 px screen - so there the bar is two rows, each control the full width. */
+@media (max-width: 30rem) {
+  #logBar { flex-direction: column; align-items: stretch; }
+  #logBar .seg, .pick { display: flex; }
+  #logBar .tab, .pick select { flex: 1; }
+}
+#feed {
+  overflow-y: auto; overscroll-behavior: contain; -webkit-user-select: text; user-select: text;
+  overflow-anchor: none;   /* older pages keep the place by script, as Safari (no scroll anchoring) needs anyway */
+  padding: var(--space-4) max(var(--space-4), env(safe-area-inset-right)) max(var(--space-8), env(safe-area-inset-bottom)) max(var(--space-4), env(safe-area-inset-left));
+}
+#feed > * { max-width: 66ch; margin: 0 auto var(--space-4); }
+#feed > .prompt { margin-top: var(--space-8); }   /* each of the game's messages opens a step: a group's gap, twice the item gap */
+#feed > :first-child, #feed > #logState[hidden] + * { margin-top: 0; }
+#logState { margin: 0 auto; max-width: 66ch; color: var(--text-muted); letter-spacing: 0.08em; text-transform: uppercase; }
+.meta { display: block; margin-bottom: var(--space-1); font-size: var(--fs-sm); line-height: var(--lh-sm); color: var(--text-muted); letter-spacing: 0.08em; text-transform: uppercase; }
+.body { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.thought .body { color: var(--text-muted); }
+.command .body {
+  padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--surface);
+  font: var(--fs-sm)/var(--lh-sm) var(--font-mono);
+}
+.command .verb { font-weight: 600; color: var(--primary-text); }
+.prompt summary { position: relative; padding-right: var(--space-8); cursor: pointer; list-style: none; }
+.prompt summary::-webkit-details-marker { display: none; }
+/* The fold's chevron is the colour picker's, on the heading's line and inside the column (the native marker
+   hangs outside it, at the screen's edge): down while folded, up while open. */
+.prompt summary::after {
+  content: ""; position: absolute; right: var(--space-1); top: calc(var(--lh-sm) + var(--space-1) + var(--lh-base) / 2);
+  width: var(--space-2); height: var(--space-2); border: solid currentColor; border-width: 0 2px 2px 0;
+  transform: translateY(-75%) rotate(45deg);
+}
+.prompt[open] summary::after { transform: translateY(-25%) rotate(225deg); }
+.prompt .head { color: var(--text); }
+.prompt[open] .body { margin-top: var(--space-2); padding: var(--space-3); border-radius: var(--radius-md); background: var(--surface-2); font: var(--fs-sm)/var(--lh-sm) var(--font-mono); }
 </style>
 </head>
 <body data-state="connecting">
@@ -114,10 +184,18 @@ textarea {
   <canvas id="screen" width="1920" height="1080"></canvas>
   <div id="state"><p id="stateLabel">Connecting</p><button class="btn" id="repair" type="button" hidden>Pair</button></div>
   <div id="bar" hidden>
-    <span class="pill"><span class="dot"></span>Live <span id="fps">0 fps</span></span>
+    <span class="acts"><span class="seg" role="tablist"><button class="tab" type="button" role="tab" data-tab="screen" aria-selected="true">Screen</button><button class="tab" type="button" role="tab" data-tab="transcript" aria-selected="false">Transcript</button></span>
+    <span class="pill"><span class="dot"></span>Live <span id="fps">0 fps</span></span></span>
     <span class="acts"><button class="btn" id="mon" type="button">Monitor off</button><button class="btn" id="off" type="button">Turn off</button></span>
   </div>
 </div>
+<section id="log" hidden>
+  <header id="logBar">
+    <span class="seg" role="tablist"><button class="tab" type="button" role="tab" data-tab="screen" aria-selected="false">Screen</button><button class="tab" type="button" role="tab" data-tab="transcript" aria-selected="true">Transcript</button></span>
+    <span class="pick"><select id="colour" aria-label="Colour"></select></span>
+  </header>
+  <div id="feed" role="log"><p id="logState"></p></div>
+</section>
 <script>
 'use strict';
 const $ = id => document.getElementById(id);
@@ -157,12 +235,12 @@ const auth = () => ({ Authorization: 'Bearer ' + cfg.key });
 function showSheet(name) {   // 'pair', 'handoff', or null for the stage
   $('pair').hidden = name !== 'pair';
   $('handoff').hidden = name !== 'handoff';
-  stage.hidden = !!name;
+  stage.hidden = !!name || tab !== 'screen';
+  $('log').hidden = !!name || tab !== 'transcript';
 }
 function start(c) {
   cfg = c; paused = false;
-  showSheet(null); fit();
-  if (wake) wake();
+  setTab(tab);
 }
 function toPair(msg) {
   paused = true;
@@ -348,7 +426,7 @@ const sleep = ms => new Promise(r => { wake = r; setTimeout(r, ms); });
 const down = () => { if (state !== 'off') setState('unreachable'); };   // Off stays Off until it answers again
 async function run() {
   for (;;) {
-    if (paused || hidden()) { await sleep(36e5); continue; }
+    if (paused || hidden() || tab !== 'screen') { await sleep(36e5); continue; }   // nobody looks: the PC stops capturing
     let streamed = false;
     try {
       ctl = new AbortController();
@@ -356,7 +434,7 @@ async function run() {
       if (r.status === 401) toPair('this key was refused');
       else if (r.ok && r.body) { streamed = true; await read(r.body.getReader()); }
       else down();   // 403: a caller outside the home subnet (a guest network, say)
-    } catch (e) { if (!streamed && !paused) down(); }
+    } catch (e) { if (!streamed && !paused && tab === 'screen') down(); }   // not the abort of leaving the tab
     ctl = null;
     if (streamed && state === 'live') setState('connecting');   // dropped mid-stream: retry at once
     await sleep(streamed ? 250 : 3000);
@@ -431,6 +509,141 @@ $('hoHere').addEventListener('click', () => {
   catch (e) { $('hoMsg').textContent = e.message; }
 });
 
+// ---- the Transcript tab: one colour's thoughts, messages and orders in the running council game ----
+// Newest last, as a chat reads. The newest page loads first; scrolling to the top pages older ones in; a poll
+// every 5 s appends what the colour did since, while the tab is open and the app in front.
+const UI = 'screen_share_ui_v1';
+const ui = (() => { try { return JSON.parse(localStorage.getItem(UI)) || {}; } catch (e) { return {}; } })();
+let tab = ui.tab === 'transcript' ? 'transcript' : 'screen';
+const feed = $('feed'), logState = $('logState'), colourSel = $('colour');
+// shown: the colour the feed holds; first/last: its oldest and newest item ids; ready: its newest page arrived.
+// One request at a time (busy); a colour change or a reset supersedes whatever is in flight (feedGen).
+let shown = null, first = null, last = null, more = false, ready = false, busy = false, feedGen = 0;
+const KIND = { thought: 'Thought', message: 'Message', command: 'Order', prompt: 'Game' };
+const words = s => s.charAt(0).toUpperCase() + s.slice(1);
+function uiSave() { try { localStorage.setItem(UI, JSON.stringify({ tab, colour: colourSel.value })); } catch (e) {} }
+
+function setTab(t) {
+  tab = t;
+  for (const b of document.querySelectorAll('.tab')) b.setAttribute('aria-selected', String(b.dataset.tab === t));
+  uiSave();
+  if (paused) return;
+  showSheet(null);
+  if (t === 'transcript') { if (ctl) ctl.abort(); showBar(false); loadColours(); }
+  else { fit(); if (wake) wake(); }
+}
+for (const b of document.querySelectorAll('.tab')) b.addEventListener('click', e => { e.stopPropagation(); setTab(b.dataset.tab); });
+
+async function api(p) {
+  const r = await fetch(cfg.origin + p, { cache: 'no-store', headers: auth() });
+  if (r.status === 401) { toPair('this key was refused'); throw new Error('refused'); }
+  if (!r.ok) throw new Error(String(r.status));
+  return r.json();
+}
+function say(s) { logState.textContent = s; logState.hidden = !s; }
+const feedUrl = q => `/transcript/${encodeURIComponent(shown)}?${q}`;
+
+function item(it) {
+  const head = document.createElement('span');
+  head.className = 'meta';
+  const time = it.t ? new Date(it.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+  head.textContent = [it.src === 'battle' ? 'Battle' : '', it.label && it.label !== 'order' ? words(it.label) : KIND[it.kind], time]
+    .filter(Boolean).join(' · ');
+  if (it.kind === 'prompt') {
+    // The game's message folds to its heading: it is the colour's whole view, thousands of words a step.
+    const el = document.createElement('details'), sum = document.createElement('summary'), h = document.createElement('span'), body = document.createElement('pre');
+    const lines = it.text.split(/\r?\n/);
+    h.className = 'head'; h.textContent = lines[0].replace(/^#+\s*/, '');
+    body.className = 'body'; body.textContent = lines.slice(1).join('\n').trim();
+    sum.append(head, h); el.append(sum, body);
+    el.className = 'prompt';
+    return el;
+  }
+  const el = document.createElement('article'), body = document.createElement('p');
+  el.className = it.kind;
+  body.className = 'body';
+  if (it.verb) {
+    const v = document.createElement('span');
+    v.className = 'verb'; v.textContent = it.verb;
+    body.append(v);
+    if (it.text !== it.verb) body.append('  ' + it.text);
+  } else if (it.text !== it.label) body.textContent = it.text;   // "end turn" is all label
+  el.append(head);
+  if (body.firstChild) el.append(body);
+  return el;
+}
+const atBottom = () => feed.scrollHeight - feed.scrollTop - feed.clientHeight < 48;
+function append(items) {
+  const stick = atBottom();
+  for (const it of items) feed.append(item(it));
+  if (items.length) { last = items[items.length - 1].id; first = first || items[0].id; }
+  if (stick) feed.scrollTop = feed.scrollHeight;
+}
+
+async function loadColours() {
+  try {
+    const c = await api('/transcript');
+    const want = colourSel.value || ui.colour;
+    colourSel.replaceChildren(...c.colours.map(k => new Option(words(k), k)));
+    colourSel.parentNode.hidden = !c.colours.length;
+    if (!c.colours.length) { ++feedGen; shown = null; busy = false; feed.replaceChildren(logState); say('No game'); return; }
+    colourSel.value = c.colours.includes(want) ? want : c.colours[0];
+    if (colourSel.value !== shown || !ready) loadFeed(); else poll();   // back on the tab: catch up, keep the place
+  } catch (e) { if (!paused && !shown) { feed.replaceChildren(logState); say('Unreachable'); } }
+}
+async function loadFeed() {
+  const gen = ++feedGen;
+  shown = colourSel.value; first = last = null; more = ready = false; busy = true;
+  feed.replaceChildren(logState);
+  say('');
+  uiSave();
+  try {
+    const p = await api(feedUrl('limit=60'));
+    if (gen !== feedGen) return;
+    more = !!p.more; ready = true;
+    if (!p.items.length) say('Nothing yet');
+    append(p.items);
+    feed.scrollTop = feed.scrollHeight;
+  } catch (e) { if (gen === feedGen && !paused) say('Unreachable'); }
+  finally { if (gen === feedGen) busy = false; }
+}
+colourSel.addEventListener('change', loadFeed);
+async function older() {
+  if (!ready || !more || busy) return;
+  busy = true;
+  const gen = feedGen;
+  try {
+    const p = await api(feedUrl(`before=${encodeURIComponent(first)}&limit=60`));
+    if (gen !== feedGen) return;
+    if (p.reset) { loadFeed(); return; }
+    const h = feed.scrollHeight;
+    logState.after(...p.items.map(item));
+    if (p.items.length) first = p.items[0].id;
+    more = !!p.more;
+    feed.scrollTop += feed.scrollHeight - h;   // what was on screen stays where it was
+  } catch (e) { /* the next scroll asks again */ }
+  finally { if (gen === feedGen) busy = false; }
+}
+feed.addEventListener('scroll', () => { if (feed.scrollTop < 400) older(); });
+// What the colour did since the newest item shown, or its newest page while it had none. A failed load is
+// retried here too, so the feed recovers by itself once the PC answers again.
+async function poll() {
+  if (paused || tab !== 'transcript' || hidden() || busy) return;
+  if (!shown) { loadColours(); return; }
+  if (!ready) { loadFeed(); return; }
+  busy = true;
+  const gen = feedGen;
+  try {
+    const p = await api(feedUrl(last ? `after=${encodeURIComponent(last)}` : 'limit=60'));
+    if (gen !== feedGen) return;
+    if (p.reset) { loadFeed(); return; }   // the match changed under it
+    if (!last) more = !!p.more;
+    if (p.items.length) { say(''); append(p.items); }
+  } catch (e) { /* a missed poll: the next one catches up */ }
+  finally { if (gen === feedGen) busy = false; }
+}
+setInterval(poll, 5000);
+
 // ---- boot ----
 // A code in the URL FRAGMENT is how the pairing QR reaches this page; a fragment is never sent to a server.
 // It is stripped from the address bar at once, and it does not pair by itself: see #handoff.
@@ -456,7 +669,7 @@ $('hoHere').addEventListener('click', () => {
 <script>if ('serviceWorker' in navigator) { navigator.serviceWorker.register('sw.js').catch(() => {}); }</script>
 <script>
 (function(){
-  var BUILD="20261113001709";                            // stamped to a unique id at publish
+  var BUILD="20261113152020";                            // stamped to a unique id at publish
   if(BUILD.indexOf("APP_BUILD")>-1) return;             // unstamped (local/dev) -> disabled
   var busy=false;
   function check(){
